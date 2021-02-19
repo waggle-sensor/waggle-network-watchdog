@@ -1,0 +1,9 @@
+#!/bin/bash
+
+case "${1}" in
+  configure)
+    echo "Enabling & starting Network Watchdog Service"
+    systemctl enable waggle-network-watchdog.timer
+    systemctl start waggle-network-watchdog.timer || true
+    ;;
+esac

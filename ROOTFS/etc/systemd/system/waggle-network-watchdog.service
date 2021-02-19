@@ -1,0 +1,9 @@
+[Unit]
+Description=Waggle Network Watchdog
+
+[Service]
+ExecStart=/usr/bin/waggle-network-watchdog
+RuntimeMaxSec=60sec
+
+[Install]
+WantedBy=multi-user.target
