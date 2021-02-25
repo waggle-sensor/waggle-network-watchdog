@@ -1,53 +1,97 @@
-#!/bin/bash -e
+#!/usr/bin/env python3
+from pathlib import Path
+import subprocess
+import time
+import logging
+from glob import glob
 
-echo "Starting Sage-Network Watchdog"
+logging.basicConfig(level=logging.INFO)
 
-#STEPS to be discussed
-# 1.) Check for internet at all
-if ! ping -q -c 1 -W 1 8.8.8.8 >/dev/null; then
-
-  echo "Internet is down, restarting network services"
-  systemctl restart NetworkManager
-  systemctl restart ModemManager
-  systemctl restart waggle-reverse-tunnel
-
-fi
-
-#2.) Check for connection to beehive
-if ! [[ $(ss -tr state established | grep beehive:20022) ]]; then 
-
-  rm -f /media/bl-rec/valid_media
-
-  lastConnected=$(cat /etc/waggle/LAST_CONNECTION_TO_BEEHIVE)
-
-  if [ $lastConnected -ge 48 ]; then
-     echo "Haven't been connected to Beehive in more than 24 hours, not sure what to do, maybe shutdown wagman service"
-     touch /media/bl-rec/fail_media
-     
-  elif [ $lastConnected -ge 6 ] && [ $lastConnected % 6 == 0 ] ; then
-     echo "Haven't been connected to Beehive in a multiple of 3 hours, rebooting"
-     systemctl --force reboot
-
-  else	
-     echo "No connection to beehive, trying to recover connection"
-     systemctl restart waggle-reverse-tunnel
-  fi
-
-  ((lastConnected++))
-
-else
-
-  echo "Valid media device, Connected to Beehive Restarting Counter"
-  echo 0 > /etc/waggle/LAST_CONNECTION_TO_BEEHIVE
-  
-  touch /media/bl-rec/valid_media
-  rm -f /media/bl-rec/fail_media
-
-fi
+last_connection_time = 0
+reset_timeout = 0
 
 
-#3 Config Failures
+def update_systemd_watchdog():
+    try:
+        subprocess.check_call(["systemd-notify", "WATCHDOG=1"])
+    except subprocess.CalledProcessError:
+        logging.warning("skipping reset of systemd watchdog")
 
-#4 Hardware Failures
 
-echo "Sage Network Watchdog Finished"
+def time_now():
+    return time.monotonic()
+
+
+def seconds_since(start):
+    return time.monotonic() - start
+
+
+def ssh_connection_ok():
+    try:
+        return (
+            "beehive:20022"
+            in subprocess.check_output(["ss", "-tr", "state", "established"]).decode()
+        )
+    except Exception:
+        return False
+
+
+# NOTE Revisit how much of the network stack we should restart. For now, I want to cover all
+# cases of wifi and modems and ssh tunnel issues.
+def restart_network_services():
+    logging.warning("restarting network services")
+
+    # ensure proper ownership of ports, ttyACM* for Modem
+    ports = glob("/dev/ttyACM*")
+    subprocess.run(["chown", "root:root"] + ports)
+    subprocess.run(["chmod", "660"] + ports)
+
+    # restart network services
+    subprocess.run(
+        [
+            "systemctl",
+            "restart",
+            "NetworkManager",
+            "ModemManager",
+            "waggle-reverse-tunnel",
+        ]
+    )
+
+
+def reboot_os():
+    subprocess.run(["systemctl", "--force", "reboot"])
+    reset_timeout = time_now()
+
+
+last_connection_time = time_now()
+reset_timeout = time_now()
+
+# Recovery actions table [time (s), recovery function]
+# restart networking stack after 15, 20 and 25 of no beehive connectivity
+# reboot after 30 mins of no beehive connectivity
+recovery_actions = [
+    (1800, reboot_os),
+    (1500, restart_network_services),
+    (1200, restart_network_services),
+    (900, restart_network_services),
+]
+
+while True:
+    update_systemd_watchdog()
+
+    if ssh_connection_ok():
+        logging.info("connection ok")
+        last_connection_time = time_now()
+        reset_timeout = time_now()
+    else:
+        logging.warning(
+            "no connection for %ss", int(seconds_since(last_connection_time))
+        )
+
+    for action in recovery_actions:
+        if seconds_since(reset_timeout) >= action[0]:
+            action[1]()
+            recovery_actions.remove(action)
+            break
+
+    time.sleep(15)
