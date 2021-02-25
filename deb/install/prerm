@@ -1,4 +1,4 @@
 #!/bin/bash
 
-systemctl stop waggle-network-watchdog.timer || true
-systemctl disable waggle-network-watchdog.timer || true
+systemctl stop waggle-network-watchdog.service || true
+systemctl disable waggle-network-watchdog.service || true

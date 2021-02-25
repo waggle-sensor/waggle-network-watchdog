@@ -2,8 +2,10 @@
 Description=Waggle Network Watchdog
 
 [Service]
+Restart=always
+RestartSec=15s
+WatchdogSec=3min
 ExecStart=/usr/bin/waggle-network-watchdog
-RuntimeMaxSec=60sec
 
 [Install]
 WantedBy=multi-user.target
