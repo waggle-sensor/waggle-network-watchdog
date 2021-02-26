@@ -8,7 +8,6 @@ from glob import glob
 logging.basicConfig(level=logging.INFO)
 
 last_connection_time = 0
-reset_timeout = 0
 
 
 def update_systemd_watchdog():
@@ -59,12 +58,12 @@ def restart_network_services():
 
 
 def reboot_os():
+    logging.warning("rebooting the system")
+    # aggressively but safely reboot the system
     subprocess.run(["systemctl", "--force", "reboot"])
-    reset_timeout = time_now()
 
 
 last_connection_time = time_now()
-reset_timeout = time_now()
 
 # Recovery actions table [time (s), recovery function]
 # restart networking stack after 15, 20 and 25 of no beehive connectivity
@@ -82,14 +81,14 @@ while True:
     if ssh_connection_ok():
         logging.info("connection ok")
         last_connection_time = time_now()
-        reset_timeout = time_now()
     else:
         logging.warning(
             "no connection for %ss", int(seconds_since(last_connection_time))
         )
 
     for action in recovery_actions:
-        if seconds_since(reset_timeout) >= action[0]:
+        if seconds_since(last_connection_time) >= action[0]:
+            logging.warning("executing %ds recovery action", action[0])
             action[1]()
             recovery_actions.remove(action)
             break
