@@ -90,7 +90,6 @@ while True:
         if seconds_since(last_connection_time) >= action[0]:
             logging.warning("executing %ds recovery action", action[0])
             action[1]()
-            recovery_actions.remove(action)
             break
 
     time.sleep(15)
