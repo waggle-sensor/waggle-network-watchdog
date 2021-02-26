@@ -82,6 +82,7 @@ while True:
 
     if ssh_connection_ok():
         logging.info("connection ok")
+        Path('/etc/waggle/waggle_ssh_ok').touch()
         last_connection_time = time_now()
         available_actions=recovery_actions.copy()
     else:
