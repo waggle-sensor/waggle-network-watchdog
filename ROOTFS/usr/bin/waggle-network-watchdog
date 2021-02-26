@@ -62,7 +62,7 @@ def reboot_os():
     # aggressively but safely reboot the system
     subprocess.run(["systemctl", "--force", "reboot"])
 
-
+ssh_ok_file=subprocess.check_output("""awk -F "= " '/ssh_ok_file/ {print $2}' /etc/waggle/config.ini""", shell=True).decode().strip()
 last_connection_time = time_now()
 
 # Recovery actions table [time (s), recovery function]
@@ -82,7 +82,12 @@ while True:
 
     if ssh_connection_ok():
         logging.info("connection ok")
-        Path('/etc/waggle/waggle_ssh_ok').touch()
+
+        if (ssh_ok_file != ''):
+            Path(ssh_ok_file).touch()
+        else:
+            logging.info("not setting flag for wagman-watchdog")
+        
         last_connection_time = time_now()
         available_actions=recovery_actions.copy()
     else:
