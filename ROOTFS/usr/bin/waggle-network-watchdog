@@ -75,21 +75,25 @@ recovery_actions = [
     (900, restart_network_services),
 ]
 
+available_actions=recovery_actions.copy()
+
 while True:
     update_systemd_watchdog()
 
     if ssh_connection_ok():
         logging.info("connection ok")
         last_connection_time = time_now()
+        available_actions=recovery_actions.copy()
     else:
         logging.warning(
             "no connection for %ss", int(seconds_since(last_connection_time))
         )
 
-    for action in recovery_actions:
-        if seconds_since(last_connection_time) >= action[0]:
-            logging.warning("executing %ds recovery action", action[0])
-            action[1]()
+    for thresh, action in available_actions:
+        if seconds_since(last_connection_time) >= thresh:
+            logging.warning("executing %ds recovery action", thresh)
+            action()
+            available_actions.remove((thresh, action))
             break
 
     time.sleep(15)
