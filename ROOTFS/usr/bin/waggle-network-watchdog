@@ -93,6 +93,7 @@ recovery_actions = [
     (900, restart_network_services),
 ]
 
+recovery_actions.sort()
 available_actions=recovery_actions.copy()
 
 while True:
