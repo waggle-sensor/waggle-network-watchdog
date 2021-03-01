@@ -4,6 +4,7 @@ import subprocess
 import time
 import logging
 from glob import glob
+import configparser
 
 logging.basicConfig(level=logging.INFO)
 
@@ -24,6 +25,23 @@ def time_now():
 def seconds_since(start):
     return time.monotonic() - start
 
+def must_read_config_file(filename):
+    config = configparser.ConfigParser()
+
+    if not config.read(filename):
+        logging.warning(f"could not read config file {filename}")
+        return None
+
+    try:
+        section = config["watchdog"]
+    except KeyError:
+        logging.warning("config error: must have section [watchdog]")
+        return None
+
+    try:
+        return section["ssh_ok_file"]
+    except KeyError:
+        return None
 
 def ssh_connection_ok():
     try:
@@ -62,7 +80,7 @@ def reboot_os():
     # aggressively but safely reboot the system
     subprocess.run(["systemctl", "--force", "reboot"])
 
-ssh_ok_file=subprocess.check_output("""awk -F "= " '/ssh_ok_file/ {print $2}' /etc/waggle/config.ini""", shell=True).decode().strip()
+ssh_ok_file = must_read_config_file("/etc/waggle/config.ini")
 last_connection_time = time_now()
 
 # Recovery actions table [time (s), recovery function]
@@ -83,7 +101,7 @@ while True:
     if ssh_connection_ok():
         logging.info("connection ok")
 
-        if (ssh_ok_file != ''):
+        if ssh_ok_file:
             Path(ssh_ok_file).touch()
         else:
             logging.info("not setting flag for wagman-watchdog")
