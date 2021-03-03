@@ -10,6 +10,7 @@ from typing import NamedTuple
 
 class WatchdogConfig(NamedTuple):
     ssh_ok_file: str
+    check_seconds: float
     check_successive_passes: int
     check_successive_seconds: float
 
@@ -34,6 +35,7 @@ def read_watchdog_config(filename, section="watchdog"):
 
     return WatchdogConfig(
         ssh_ok_file=d.get("ssh_ok_file", None),
+        check_seconds=float(d.get("check_seconds", 15.0)),
         check_successive_passes=int(d.get("check_successive_passes", 3)),
         check_successive_seconds=float(d.get("check_successive_seconds", 5.0)),
     )
@@ -150,7 +152,7 @@ def main():
                 available_actions.remove((thresh, action))
                 break
 
-        time.sleep(15)
+        time.sleep(config.check_seconds)
 
 
 if __name__ == "__main__":
