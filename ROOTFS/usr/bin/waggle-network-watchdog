@@ -27,21 +27,11 @@ def seconds_since(start):
 
 def must_read_config_file(filename):
     config = configparser.ConfigParser()
-
+    # configparser.read only returns a list of successfully read files,
+    # so we wrap the failure case as an exception.
     if not config.read(filename):
-        logging.warning(f"could not read config file {filename}")
-        return None
-
-    try:
-        section = config["watchdog"]
-    except KeyError:
-        logging.warning("config error: must have section [watchdog]")
-        return None
-
-    try:
-        return section["ssh_ok_file"]
-    except KeyError:
-        return None
+        raise RuntimeError(f"could not read config file {filename}")
+    return config
 
 def ssh_connection_ok():
     try:
@@ -80,7 +70,9 @@ def reboot_os():
     # aggressively but safely reboot the system
     subprocess.run(["systemctl", "--force", "reboot"])
 
-ssh_ok_file = must_read_config_file("/etc/waggle/config.ini")
+config = must_read_config_file("/etc/waggle/config.ini")
+ssh_ok_file = config["watchdog"]["ssh_ok_file"]
+
 last_connection_time = time_now()
 
 # Recovery actions table [time (s), recovery function]
