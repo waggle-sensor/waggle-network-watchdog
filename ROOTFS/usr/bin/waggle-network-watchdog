@@ -25,23 +25,21 @@ def time_now():
 def seconds_since(start):
     return time.monotonic() - start
 
-def must_read_config_file(filename):
+
+def must_read_config_section(filename, section):
     config = configparser.ConfigParser()
 
     if not config.read(filename):
         logging.warning(f"could not read config file {filename}")
-        return None
+        return {}
 
     try:
-        section = config["watchdog"]
-    except KeyError:
-        logging.warning("config error: must have section [watchdog]")
-        return None
+        return dict(config[section])
+    except Exception:
+        logging.warning("could not read config section [%s]", section)
 
-    try:
-        return section["ssh_ok_file"]
-    except KeyError:
-        return None
+    return {}
+
 
 def ssh_connection_ok():
     try:
@@ -80,7 +78,10 @@ def reboot_os():
     # aggressively but safely reboot the system
     subprocess.run(["systemctl", "--force", "reboot"])
 
-ssh_ok_file = must_read_config_file("/etc/waggle/config.ini")
+
+config = must_read_config_section("/etc/waggle/config.ini", "watchdog")
+ssh_ok_file = config.get("ssh_ok_file", None)
+
 last_connection_time = time_now()
 
 # Recovery actions table [time (s), recovery function]
@@ -93,8 +94,10 @@ recovery_actions = [
     (900, restart_network_services),
 ]
 
+# sort in increasing order of threshold so that our linear
+# search finds the "earliest" available action
 recovery_actions.sort()
-available_actions=recovery_actions.copy()
+available_actions = recovery_actions.copy()
 
 while True:
     update_systemd_watchdog()
@@ -102,13 +105,13 @@ while True:
     if ssh_connection_ok():
         logging.info("connection ok")
 
-        if ssh_ok_file:
+        if ssh_ok_file is not None:
             Path(ssh_ok_file).touch()
         else:
             logging.info("not setting flag for wagman-watchdog")
         
         last_connection_time = time_now()
-        available_actions=recovery_actions.copy()
+        available_actions = recovery_actions.copy()
     else:
         logging.warning(
             "no connection for %ss", int(seconds_since(last_connection_time))
