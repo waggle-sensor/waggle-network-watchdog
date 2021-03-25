@@ -7,14 +7,25 @@ import socket
 from glob import glob
 import configparser
 from typing import NamedTuple
-
+import json
 
 class WatchdogConfig(NamedTuple):
-    ssh_ok_file: str
+    nwwd_ok_file: str
+
+class NetworkWatchdogConfig(NamedTuple):
     check_seconds: float
     check_successive_passes: int
     check_successive_seconds: float
-
+    current_media: int
+    network_resets: list
+    network_num_resets: int
+    network_reset_file: str
+    soft_resets: list
+    soft_num_resets: int
+    soft_reset_file: str
+    hard_resets: list
+    hard_num_resets: int
+    hard_reset_file: str
 
 class ReverseTunnelConfig(NamedTuple):
     beekeeper_server: str
@@ -35,17 +46,37 @@ def read_config_section_dict(filename, section):
 
     return {}
 
-
 def read_watchdog_config(filename, section="watchdog"):
     d = read_config_section_dict(filename, section)
 
     return WatchdogConfig(
-        ssh_ok_file=d.get("ssh_ok_file", None),
-        check_seconds=float(d.get("check_seconds", 15.0)),
-        check_successive_passes=int(d.get("check_successive_passes", 3)),
-        check_successive_seconds=float(d.get("check_successive_seconds", 5.0)),
+        nwwd_ok_file=d.get("ssh_ok_file", None),
     )
 
+def read_network_watchdog_config(filename):
+    all_settings = read_config_section_dict(filename, "all")
+    network_reset_settings = read_config_section_dict(filename, "network-reboot")
+    soft_reset_settings = read_config_section_dict(filename, "soft-reboot")
+    hard_reset_settings = read_config_section_dict(filename, "hard-reboot")
+
+    return NetworkWatchdogConfig(
+        network_resets=json.loads(network_reset_settings.get("resets", [])),
+        network_num_resets=int(network_reset_settings.get("num_resets", 0)),
+        network_reset_file=network_reset_settings.get("current_reset_file", None),
+        
+	soft_resets=json.loads(soft_reset_settings.get("resets", [])),
+        soft_num_resets=int(soft_reset_settings.get("num_resets", 0)),
+        soft_reset_file=soft_reset_settings.get("current_reset_file", None),
+	
+	hard_resets=json.loads(hard_reset_settings.get("resets", [])),
+        hard_num_resets=int(hard_reset_settings.get("num_resets", 0)),
+        hard_reset_file=hard_reset_settings.get("current_reset_file", None),
+        
+        current_media=all_settings.get("current_media", None),
+	check_seconds=float(all_settings.get("check_seconds", 15.0)),
+        check_successive_passes=int(all_settings.get("check_successive_passes", 3)),
+        check_successive_seconds=float(all_settings.get("check_successive_seconds", 5.0)),
+    )
 
 def read_reverse_tunnel_config(filename, section="reverse-tunnel"):
     d = read_config_section_dict(filename, section)
@@ -123,34 +154,71 @@ def reboot_os():
     # aggressively but safely reboot the system
     subprocess.run(["systemctl", "--force", "reboot"])
 
+def shutdown_os():
+    logging.warning("shutting down the system")
+    # aggressively but safely shutdown the system
+    subprocess.run(["systemctl", "--force", "poweroff"])
+
 
 # Recovery actions table [time (s), recovery function]
 # restart networking stack after 15, 20 and 25 of no beehive connectivity
-# reboot after 30 mins of no beehive connectivity
+# reboot after 30 mins of no beehive connectivity shutdown after 1 hour 
+# of no connection to beehive after 3 30 minute reboots
 #
 # NOTE We sort in increasing order of threshold so that our linear
 # search finds the "earliest" available action
-recovery_actions = sorted(
-    [
-        (1800, reboot_os),
-        (1500, restart_network_services),
-        (1200, restart_network_services),
-        (900, restart_network_services),
-    ]
-)
+def build_rec_actions(nwwdconfig):
 
+    recovery_actions = []
+    for time in nwwdconfig.network_resets:
+        recovery_actions.append([time, restart_network_services])
+
+    for time in nwwdconfig.soft_resets:
+        recovery_actions.append([time, reboot_os])
+
+    for time in nwwdconfig.hard_resets:
+        recovery_actions.append([time, shutdown_os])
+
+    return sorted(recovery_actions)
+
+def read_current_resets(reset_file):
+    resets = 0
+    if not Path(reset_file).exists():
+        Path(reset_file).touch()
+
+        with open(reset_file, 'w') as f:
+            f.write('%d' % resets)
+    else:
+        with open(reset_file, 'r') as f:
+            resets = int(f.readline())
+
+    return resets
+
+def write_current_resets(reset_file, current_resets):
+    with open(reset_file, 'w') as f:
+            f.write('%d' % current_resets)
 
 def main():
     logging.basicConfig(level=logging.INFO)
 
+    nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
     wd_config = read_watchdog_config("/etc/waggle/config.ini")
     rssh_config = read_reverse_tunnel_config("/etc/waggle/config.ini")
-
+    
+    initial_connection = False
     last_connection_time = time_now()
+    recovery_actions = build_rec_actions(nwwd_config)
     available_actions = recovery_actions.copy()
+    
+    current_network_resets = read_current_resets(nwwd_config.network_reset_file)
+    current_soft_resets = read_current_resets(nwwd_config.soft_reset_file)
+    current_hard_resets = read_current_resets(nwwd_config.hard_reset_file)
 
     while True:
         update_systemd_watchdog()
+
+        if wd_config.nwwd_ok_file is not None:
+                Path(wd_config.nwwd_ok_file).touch()
 
         logging.info(
             f"checking connection [{rssh_config.beekeeper_server}:{rssh_config.beekeeper_port}]"
@@ -159,31 +227,71 @@ def main():
             ssh_connection_ok,
             rssh_config.beekeeper_server,
             rssh_config.beekeeper_port,
-            wd_config.check_successive_passes,
-            wd_config.check_successive_seconds,
+            nwwd_config.check_successive_passes,
+            nwwd_config.check_successive_seconds,
         ):
             logging.info("connection ok")
-
-            if wd_config.ssh_ok_file is not None:
-                Path(wd_config.ssh_ok_file).touch()
-            else:
-                logging.info("not setting flag for wagman-watchdog")
-
+            
+            # mark this boot as success
+            if not initial_connection:
+                subprocess.run( ["nv_update_engine", "-v"] )
+                initial_connection = True
+            
             last_connection_time = time_now()
             available_actions = recovery_actions.copy()
+
+            write_current_resets(nwwd_config.hard_reset_file, 0)
+            write_current_resets(nwwd_config.soft_reset_file, 0)
+            write_current_resets(nwwd_config.network_reset_file, 0)
+
         else:
             logging.warning(
                 "no connection for %ss", int(seconds_since(last_connection_time))
             )
 
+        cur_action = 0
         for thresh, action in available_actions:
             if seconds_since(last_connection_time) >= thresh:
+                
+                # last effort, switch media
+                if (action == shutdown_os and current_hard_resets >= nwwd_config.hard_num_resets):
+                    logging.warning("executing media switch recovery action")
+
+                    write_current_resets(nwwd_config.hard_reset_file, 0)
+                    write_current_resets(nwwd_config.soft_reset_file, 0)
+                    write_current_resets(nwwd_config.network_reset_file, 0)
+                    
+                    if ( nwwd_config.current_media == 0 ):
+                        subprocess.run( ["nvbootctrl", "set-active-boot-slot", "1"] )
+                    else:
+                        subprocess.run( ["nvbootctrl", "set-active-boot-slot", "0"] )
+
+                    reboot_os()
+
+                elif ( action == reboot_os and current_soft_resets >= nwwd_config.soft_num_resets ):
+                    available_actions.remove(cur_action)
+                    continue
+                
+                elif (action == shutdown_os):
+                    current_hard_resets += 1
+                    write_current_resets(nwwd_config.hard_reset_file, current_hard_resets)
+
+                elif (action == reboot_os):
+                    current_soft_resets += 1
+                    write_current_resets(nwwd_config.soft_reset_file, current_soft_resets)
+
+                elif (action == restart_network_services):
+                    current_network_resets += 1
+                    write_current_resets(nwwd_config.network_reset_file, current_network_resets)                                        
+
                 logging.warning("executing %ds recovery action", thresh)
                 action()
-                available_actions.remove((thresh, action))
+                available_actions.pop(cur_action)
                 break
 
-        time.sleep(wd_config.check_seconds)
+            cur_action += 1
+
+        time.sleep(nwwd_config.check_seconds)
 
 
 if __name__ == "__main__":
