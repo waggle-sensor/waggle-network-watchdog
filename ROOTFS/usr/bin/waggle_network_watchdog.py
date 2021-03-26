@@ -30,13 +30,14 @@ class Watchdog:
         self.last_connection_time = self.time_func()
 
     def update(self):
-        now = self.time_func()
-        elapsed = now - self.last_connection_time
+        health_check_ok = self.health_check()
+        health_check_finish_time = self.time_func()
+        elapsed = health_check_finish_time - self.last_connection_time
 
-        if self.health_check():
+        if health_check_ok:
             self.health_check_passed(elapsed)
+            self.last_connection_time = health_check_finish_time
             self.called_actions.clear()
-            self.last_connection_time = now
             return
 
         self.health_check_failed(elapsed)
@@ -135,14 +136,6 @@ def update_systemd_watchdog():
         subprocess.check_call(["systemd-notify", "WATCHDOG=1"])
     except Exception:
         logging.warning("skipping reset of systemd watchdog")
-
-
-def time_now():
-    return time.monotonic()
-
-
-def seconds_since(start):
-    return time.monotonic() - start
 
 
 def ssh_connection_ok(server, port):
