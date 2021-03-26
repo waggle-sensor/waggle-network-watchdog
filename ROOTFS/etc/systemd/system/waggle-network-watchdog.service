@@ -5,7 +5,7 @@ Description=Waggle Network Watchdog
 Restart=always
 RestartSec=15s
 WatchdogSec=3min
-ExecStart=/usr/bin/waggle-network-watchdog
+ExecStart=/usr/bin/waggle_network_watchdog.py
 
 [Install]
 WantedBy=multi-user.target
