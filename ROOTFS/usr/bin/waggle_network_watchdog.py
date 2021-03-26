@@ -31,19 +31,17 @@ class Watchdog:
 
     def update(self):
         now = self.time_func()
-        logging.debug("watchdog update at %s", now)
+        elapsed = now - self.last_connection_time
 
         if self.health_check():
-            self.health_check_passed(now)
+            self.health_check_passed(elapsed)
             self.called_actions.clear()
             self.last_connection_time = now
             return
 
-        self.health_check_failed(now)
+        self.health_check_failed(elapsed)
 
         # dispatch all activated recovery actions
-        elapsed = now - self.last_connection_time
-
         for action in self.recovery_actions:
             if elapsed < action.thresh:
                 break
