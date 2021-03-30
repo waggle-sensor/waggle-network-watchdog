@@ -1,0 +1,16 @@
+#!/bin/sh
+
+echo ACTION $0 $@
+
+# track last media selected
+case "$1" in
+get-current-slot)
+    if test -e /tmp/current-slot; then
+        cat /tmp/current-slot
+    else
+        echo 0
+    fi
+    ;;
+set-active-boot-slot)
+    echo "$2" > /tmp/current-slot
+esac
