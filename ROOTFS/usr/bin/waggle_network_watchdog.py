@@ -9,6 +9,8 @@ import configparser
 from typing import NamedTuple, Callable
 import json
 
+MEDIA_MMC = 0
+MEDIA_SD = 1
 
 class Action(NamedTuple):
     thresh: int
@@ -104,7 +106,7 @@ def read_network_watchdog_config(filename):
     hard_reset_settings = read_config_section_dict(filename, "hard-reboot")
 
     sd_card_storage_loc = ''
-    if read_current_media():
+    if read_current_media() == MEDIA_SD:
         sd_card_storage_loc = all_settings.get("sd_card_storage_loc", None)
     
     return NetworkWatchdogConfig(
@@ -290,11 +292,8 @@ def update_reset_file(reset_file, value):
 def read_current_media():
         return 1 if '1' in subprocess.check_output(["nvbootctrl", "get-current-slot"]).decode() else 0
 
-def main():
-    logging.basicConfig(level=logging.INFO)
-
+def build_watchdog():
     nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
-    wd_config = read_watchdog_config("/etc/waggle/config.ini")
     rssh_config = read_reverse_tunnel_config("/etc/waggle/config.ini")
     
     def health_check():
@@ -318,13 +317,21 @@ def main():
 
     recovery_actions = build_rec_actions(nwwd_config)
 
-    watchdog = Watchdog(
+    return Watchdog(
         time_func=time.monotonic,
         health_check=health_check,
         health_check_passed=health_check_passed,
         health_check_failed=health_check_failed,
         recovery_actions=recovery_actions,
     )
+
+def main():
+    logging.basicConfig(level=logging.INFO)
+
+    nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
+    wd_config = read_watchdog_config("/etc/waggle/config.ini")
+
+    watchdog = build_watchdog()
 
     logging.info("marking boot as successful for media %s", nwwd_config.current_media)
     subprocess.run(["nv_update_engine", "-v"])
