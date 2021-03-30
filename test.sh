@@ -2,22 +2,22 @@
 
 docker build -f Dockerfile.test -t waggle-network-watchdog .
 docker run -it --rm waggle-network-watchdog /bin/sh -c '
-getcount() {
+getvalue() {
     if test -e "$1"; then
         cat "$1"
     else
-        echo x
+        echo "$2"
     fi
 }
 
 for _ in $(seq 20); do
-    echo mmc_network_reset_count $(getcount /etc/waggle/nw/network_reset_count)
-    echo mmc_soft_reset_count $(getcount /etc/waggle/nw/soft_reset_count)
-    echo mmc_hard_reset_count $(getcount /etc/waggle/nw/hard_reset_count)
-    echo sd_network_reset_count $(getcount /media/scratch/etc/waggle/nw/network_reset_count)
-    echo sd_soft_reset_count $(getcount /media/scratch/etc/waggle/nw/soft_reset_count)
-    echo sd_hard_reset_count $(getcount /media/scratch/etc/waggle/nw/hard_reset_count)
-
+    echo STATE current_media $(getvalue /tmp/current-slot 0)
+    echo STATE mmc_network_reset_count $(getvalue /etc/waggle/nw/network_reset_count 0)
+    echo STATE mmc_soft_reset_count $(getvalue /etc/waggle/nw/soft_reset_count 0)
+    echo STATE mmc_hard_reset_count $(getvalue /etc/waggle/nw/hard_reset_count 0)
+    echo STATE sd_network_reset_count $(getvalue /media/scratch/etc/waggle/nw/network_reset_count 0)
+    echo STATE sd_soft_reset_count $(getvalue /media/scratch/etc/waggle/nw/soft_reset_count 0)
+    echo STATE sd_hard_reset_count $(getvalue /media/scratch/etc/waggle/nw/hard_reset_count 0)
     /usr/bin/test_waggle_network_watchdog.py
 done
 '
