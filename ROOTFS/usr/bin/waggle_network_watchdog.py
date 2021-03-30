@@ -103,20 +103,24 @@ def read_network_watchdog_config(filename):
     soft_reset_settings = read_config_section_dict(filename, "soft-reboot")
     hard_reset_settings = read_config_section_dict(filename, "hard-reboot")
 
+    sd_card_storage_loc = ''
+    if read_current_media():
+        sd_card_storage_loc = all_settings.get("sd_card_storage_loc", None)
+    
     return NetworkWatchdogConfig(
+        current_media=read_current_media(),
         network_resets=json.loads(network_reset_settings.get("resets", None)),
         network_num_resets=int(network_reset_settings.get("num_resets", 0)),
-        network_reset_file=network_reset_settings.get("current_reset_file", None),
+        network_reset_file=sd_card_storage_loc+network_reset_settings.get("current_reset_file", None),
         
 	soft_resets=json.loads(soft_reset_settings.get("resets", None)),
         soft_num_resets=int(soft_reset_settings.get("num_resets", 0)),
-        soft_reset_file=soft_reset_settings.get("current_reset_file", None),
+        soft_reset_file=sd_card_storage_loc+soft_reset_settings.get("current_reset_file", None),
 	
 	hard_resets=json.loads(hard_reset_settings.get("resets", None)),
         hard_num_resets=int(hard_reset_settings.get("num_resets", 0)),
-        hard_reset_file=hard_reset_settings.get("current_reset_file", None),
+        hard_reset_file=sd_card_storage_loc+hard_reset_settings.get("current_reset_file", None),
         
-        current_media=all_settings.get("media", None),
 	check_seconds=float(all_settings.get("check_seconds", 15.0)),
         check_successive_passes=int(all_settings.get("check_successive_passes", 3)),
         check_successive_seconds=float(all_settings.get("check_successive_seconds", 5.0)),
@@ -279,6 +283,8 @@ def update_reset_file(reset_file, value):
     if value != file_value:
         write_current_resets(reset_file, value)
 
+def read_current_media():
+        return 1 if '1' in subprocess.check_output(["nvbootctrl", "get-current-slot"]).decode() else 0
 
 def main():
     logging.basicConfig(level=logging.INFO)
