@@ -261,7 +261,7 @@ def read_current_resets(reset_file):
         folder = reset_file[:last_dir_index]
 
         Path(folder).mkdir(parents=True, exist_ok=True)
-	Path(reset_file).touch()
+        Path(reset_file).touch()
 
         with open(reset_file, 'w') as f:
             f.write('%d' % resets)
