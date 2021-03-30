@@ -256,6 +256,21 @@ def build_rec_actions(nwwd_config):
     return sorted(recovery_actions)
 
 
+def read_resets_safe(reset_file):
+    try:
+        with open(reset_file, 'r') as f:
+            return int(f.readline())
+    except Exception:
+        logging.warning("Unable to read from file: %s", reset_file)
+        return 0
+
+def write_resets_safe(reset_file, resets):
+    try:
+        with open(reset_file, 'w') as f:
+            f.write('%d' % resets)
+    except Exception:
+        logging.warnging("Unable to write to file: %s", reset_file)
+
 def read_current_resets(reset_file):
     resets = 0
     if not Path(reset_file).exists():
@@ -264,20 +279,16 @@ def read_current_resets(reset_file):
 
         Path(folder).mkdir(parents=True, exist_ok=True)
         Path(reset_file).touch()
-
-        with open(reset_file, 'w') as f:
-            f.write('%d' % resets)
+        
+        write_resets_safe(reset_file, resets)
     else:
-        with open(reset_file, 'r') as f:
-            resets = int(f.readline())
+        return read_resets_safe(reset_file)
 
     return resets
 
 
 def write_current_resets(reset_file, current_resets):
-    with open(reset_file, 'w') as f:
-            f.write('%d' % current_resets)
-
+    write_resets_safe(reset_file, current_resets)
 
 def increment_reset_file(reset_file):
     resets = read_current_resets(reset_file)
@@ -337,16 +348,16 @@ def main():
     subprocess.run(["nv_update_engine", "-v"])
 
     while True:
+        watchdog.update()
+
         # update software watchdog
         update_systemd_watchdog()
 
         # update hardware watchdog
         if wd_config.nwwd_ok_file is not None:
             Path(wd_config.nwwd_ok_file).touch()
-
-        watchdog.update()
+        
         time.sleep(nwwd_config.check_seconds)
-
 
 if __name__ == "__main__":
     main()
