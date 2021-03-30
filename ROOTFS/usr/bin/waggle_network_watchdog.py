@@ -257,7 +257,11 @@ def build_rec_actions(nwwd_config):
 def read_current_resets(reset_file):
     resets = 0
     if not Path(reset_file).exists():
-        Path(reset_file).touch()
+        last_dir_index = reset_file.rfind("/")
+        folder = reset_file[:last_dir_index]
+
+        Path(folder).mkdir(parents=True, exist_ok=True)
+	Path(reset_file).touch()
 
         with open(reset_file, 'w') as f:
             f.write('%d' % resets)
