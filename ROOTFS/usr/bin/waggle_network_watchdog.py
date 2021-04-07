@@ -173,15 +173,21 @@ def require_successive_passes(
     return True
 
 
+def fix_modem_port_settings():
+    ports = glob("/dev/ttyACM*")
+    if len(ports) == 0:
+        return
+    # ensure proper ownership of ports, ttyACM* for Modem
+    subprocess.run(["chown", "root:root"] + ports)
+    subprocess.run(["chmod", "660"] + ports)
+
+
 # NOTE Revisit how much of the network stack we should restart. For now, I want to cover all
 # cases of wifi and modems and ssh tunnel issues.
 def restart_network_services(nwwd_config):
     logging.warning("restarting network services")
 
-    # ensure proper ownership of ports, ttyACM* for Modem
-    ports = glob("/dev/ttyACM*")
-    subprocess.run(["chown", "root:root"] + ports)
-    subprocess.run(["chmod", "660"] + ports)
+    fix_modem_port_settings()
 
     # restart network services
     subprocess.run( ['systemctl', 'restart'] + nwwd_config.network_services )
