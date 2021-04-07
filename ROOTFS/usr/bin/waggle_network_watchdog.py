@@ -63,6 +63,8 @@ class NetworkWatchdogConfig(NamedTuple):
     check_successive_passes: int
     check_successive_seconds: float
     current_media: int
+    network_check: list
+    network_services: list
     network_resets: list
     network_num_resets: int
     network_reset_file: str
@@ -72,6 +74,7 @@ class NetworkWatchdogConfig(NamedTuple):
     hard_resets: list
     hard_num_resets: int
     hard_reset_file: str
+    
 
 class ReverseTunnelConfig(NamedTuple):
     beekeeper_server: str
@@ -123,6 +126,8 @@ def read_network_watchdog_config(filename):
         hard_num_resets=int(hard_reset_settings.get("num_resets", 0)),
         hard_reset_file=sd_card_storage_loc+hard_reset_settings.get("current_reset_file", None),
         
+        network_check=json.loads(all_settings.get("network_check",None)),
+        network_services=json.loads(all_settings.get("network_services",None)),
 	check_seconds=float(all_settings.get("check_seconds", 15.0)),
         check_successive_passes=int(all_settings.get("check_successive_passes", 3)),
         check_successive_seconds=float(all_settings.get("check_successive_seconds", 5.0)),
@@ -158,7 +163,6 @@ def ssh_connection_ok(server, port):
     except Exception:
         return False
 
-
 def require_successive_passes(
     check_func, server, port, successive_passes, successive_seconds
 ):
@@ -171,7 +175,7 @@ def require_successive_passes(
 
 # NOTE Revisit how much of the network stack we should restart. For now, I want to cover all
 # cases of wifi and modems and ssh tunnel issues.
-def restart_network_services():
+def restart_network_services(nwwd_config):
     logging.warning("restarting network services")
 
     # ensure proper ownership of ports, ttyACM* for Modem
@@ -180,16 +184,7 @@ def restart_network_services():
     subprocess.run(["chmod", "660"] + ports)
 
     # restart network services
-    subprocess.run(
-        [
-            "systemctl",
-            "restart",
-            "NetworkManager",
-            "ModemManager",
-            "waggle-bk-reverse-tunnel",
-        ]
-    )
-
+    subprocess.run( ['systemctl', 'restart'] + nwwd_config.network_services )
 
 def reboot_os():
     logging.warning("rebooting the system")
@@ -206,7 +201,7 @@ def shutdown_os():
 # contained functions.
 def build_rec_actions(nwwd_config):
     def reset_network_action():
-        restart_network_services()
+        restart_network_services(nwwd_config)
         increment_reset_file(nwwd_config.network_reset_file)
 
     def soft_reboot_action():
@@ -306,16 +301,30 @@ def read_current_media():
 def build_watchdog():
     nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
     rssh_config = read_reverse_tunnel_config("/etc/waggle/config.ini")
-    
     def health_check():
-        logging.info("checking connection [%s:%s]", rssh_config.beekeeper_server, rssh_config.beekeeper_port)
-        return require_successive_passes(
-            ssh_connection_ok,
-            rssh_config.beekeeper_server,
-            rssh_config.beekeeper_port,
-            nwwd_config.check_successive_passes,
-            nwwd_config.check_successive_seconds,
-        )
+        if 'Beekeeper' in nwwd_config.network_check and 'Beehive' in nwwd_config.network_check:
+            logging.info("checking connection [%s:%s] or [beehive:20022]", rssh_config.beekeeper_server, rssh_config.beekeeper_port)
+            return require_successive_passes(ssh_connection_ok, rssh_config.beekeeper_server, rssh_config.beekeeper_port, nwwd_config.check_successive_passes, nwwd_config.check_successive_seconds) or require_successive_passes(ssh_connection_ok, 'beehive', 20022, nwwd_config.check_successive_passes, nwwd_config.check_successive_seconds)
+        elif "Beehive" in nwwd_config.network_check:
+            logging.info("checking connection [beehive:20022]")
+            return require_successive_passes(
+                ssh_connection_ok,
+                'beehive',
+                20022,
+                nwwd_config.check_successive_passes,
+                nwwd_config.check_successive_seconds,
+            )
+        #default check only beekeeper
+        else:
+            logging.info("checking connection [%s:%s]", rssh_config.beekeeper_server, rssh_config.beekeeper_port)
+            return require_successive_passes(
+                bk_connection_ok,
+                rssh_config.beekeeper_server,
+                rssh_config.beekeeper_port,
+                nwwd_config.check_successive_passes,
+                nwwd_config.check_successive_seconds,
+            )
+        
 
     def health_check_passed(timer):
         logging.info("connection ok")    
@@ -337,15 +346,19 @@ def build_watchdog():
     )
 
 def main():
+    subprocess.run(['nvbootctrl', 'dump-slots-info'])
+    subprocess.run(["nv_update_engine", "-v"])
+    subprocess.run(['nvbootctrl', 'mark-boot-successful'])
+
     logging.basicConfig(level=logging.INFO)
+    logging.info("marked boot as successful for media %s", read_current_media())
+    logging.info("Slots info after marking boot successful:")
+    subprocess.run(['nvbootctrl', 'dump-slots-info'])
 
     nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
     wd_config = read_watchdog_config("/etc/waggle/config.ini")
-
+    
     watchdog = build_watchdog()
-
-    logging.info("marking boot as successful for media %s", nwwd_config.current_media)
-    subprocess.run(["nv_update_engine", "-v"])
 
     while True:
         watchdog.update()
