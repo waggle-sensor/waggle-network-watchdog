@@ -304,33 +304,25 @@ def update_reset_file(reset_file, value):
 def read_current_media():
         return 1 if '1' in subprocess.check_output(["nvbootctrl", "get-current-slot"]).decode() else 0
 
+
 def build_watchdog():
     nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
     rssh_config = read_reverse_tunnel_config("/etc/waggle/config.ini")
+
+    # build addr list to check
+    health_check_addrs = []
+    if "Beekeeper" in nwwd_config.network_check:
+        health_check_addrs.append((rssh_config.beekeeper_server, rssh_config.beekeeper_port))
+    if "Beehive" in nwwd_config.network_check:
+        health_check_addrs.append(('beehive', '20022'))
+    
     def health_check():
-        if 'Beekeeper' in nwwd_config.network_check and 'Beehive' in nwwd_config.network_check:
-            logging.info("checking connection [%s:%s] or [beehive:20022]", rssh_config.beekeeper_server, rssh_config.beekeeper_port)
-            return require_successive_passes(ssh_connection_ok, rssh_config.beekeeper_server, rssh_config.beekeeper_port, nwwd_config.check_successive_passes, nwwd_config.check_successive_seconds) or require_successive_passes(ssh_connection_ok, 'beehive', 20022, nwwd_config.check_successive_passes, nwwd_config.check_successive_seconds)
-        elif "Beehive" in nwwd_config.network_check:
-            logging.info("checking connection [beehive:20022]")
-            return require_successive_passes(
-                ssh_connection_ok,
-                'beehive',
-                20022,
-                nwwd_config.check_successive_passes,
-                nwwd_config.check_successive_seconds,
-            )
-        #default check only beekeeper
-        else:
-            logging.info("checking connection [%s:%s]", rssh_config.beekeeper_server, rssh_config.beekeeper_port)
-            return require_successive_passes(
-                bk_connection_ok,
-                rssh_config.beekeeper_server,
-                rssh_config.beekeeper_port,
-                nwwd_config.check_successive_passes,
-                nwwd_config.check_successive_seconds,
-            )
-        
+        logging.info("checking connections to any of %s", health_check_addrs)
+        return any(require_successive_passes(ssh_connection_ok,
+                                             server,
+                                             port,
+                                             nwwd_config.check_successive_passes,
+                                             nwwd_config.check_successive_seconds) for server, port in health_check_addrs)
 
     def health_check_passed(timer):
         logging.info("connection ok")    
