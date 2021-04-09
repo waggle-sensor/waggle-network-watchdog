@@ -8,6 +8,7 @@ from glob import glob
 import configparser
 from typing import NamedTuple, Callable
 import json
+import ast
 
 MEDIA_MMC = 0
 MEDIA_SD = 1
@@ -63,7 +64,7 @@ class NetworkWatchdogConfig(NamedTuple):
     check_successive_passes: int
     check_successive_seconds: float
     current_media: int
-    network_check: list
+    rssh_addrs: list
     network_services: list
     network_resets: list
     network_num_resets: int
@@ -126,7 +127,7 @@ def read_network_watchdog_config(filename):
         hard_num_resets=int(hard_reset_settings.get("num_resets", 0)),
         hard_reset_file=sd_card_storage_loc+hard_reset_settings.get("current_reset_file", None),
         
-        network_check=json.loads(all_settings.get("network_check",None)),
+        rssh_addrs=list(ast.literal_eval(all_settings.get("rssh_addrs",None))),
         network_services=json.loads(all_settings.get("network_services",None)),
 	check_seconds=float(all_settings.get("check_seconds", 15.0)),
         check_successive_passes=int(all_settings.get("check_successive_passes", 3)),
@@ -308,19 +309,12 @@ def read_current_media():
 def build_watchdog():
     nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
     rssh_config = read_reverse_tunnel_config("/etc/waggle/config.ini")
-
-    # build addr list to check
-    health_check_addrs = []
-    if "Beekeeper" in nwwd_config.network_check:
-        health_check_addrs.append(('beekeeper', rssh_config.beekeeper_server, rssh_config.beekeeper_port))
-    if "Beehive" in nwwd_config.network_check:
-        health_check_addrs.append(('beehive', 'beehive', '20022'))
     
     def health_check():
-        logging.info("checking connections to any of %s", health_check_addrs)
+        logging.info("checking connections to any of %s", nwwd_config.rssh_addrs)
     
         health = False
-        for alias, server, port in health_check_addrs:
+        for alias, server, port in nwwd_config.rssh_addrs:
             curServerHealth = require_successive_passes(ssh_connection_ok,
                                                         server,
                                                         port,
@@ -332,7 +326,7 @@ def build_watchdog():
             
             try:
                 subprocess.check_call(["waggle-publish-metric", "sys.rssh_up", str(int(curServerHealth)), "--meta", "server=" + alias])
-            except FileNotFoundError:
+            except Exception:
                 logging.warning("waggle-publish-metric not found. no metrics will be published")
     
         return health
