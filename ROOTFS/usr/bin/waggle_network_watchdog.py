@@ -312,17 +312,30 @@ def build_watchdog():
     # build addr list to check
     health_check_addrs = []
     if "Beekeeper" in nwwd_config.network_check:
-        health_check_addrs.append((rssh_config.beekeeper_server, rssh_config.beekeeper_port))
+        health_check_addrs.append(('beekeeper', rssh_config.beekeeper_server, rssh_config.beekeeper_port))
     if "Beehive" in nwwd_config.network_check:
-        health_check_addrs.append(('beehive', '20022'))
+        health_check_addrs.append(('beehive', 'beehive', '20022'))
     
     def health_check():
         logging.info("checking connections to any of %s", health_check_addrs)
-        return any(require_successive_passes(ssh_connection_ok,
-                                             server,
-                                             port,
-                                             nwwd_config.check_successive_passes,
-                                             nwwd_config.check_successive_seconds) for server, port in health_check_addrs)
+    
+        health = False
+        for alias, server, port in health_check_addrs:
+            curServerHealth = require_successive_passes(ssh_connection_ok,
+                                                        server,
+                                                        port,
+                                                        nwwd_config.check_successive_passes,
+                                                        nwwd_config.check_successive_seconds) 
+
+            health = health or curServerHealth
+            logging.debug(f"Reporting ssh connection of {alias} as {curServerHealth}")
+            
+            try:
+                subprocess.check_call(["waggle-publish-metric", "sys.rssh_up", str(int(curServerHealth)), "--meta", "server=" + alias])
+            except FileNotFoundError:
+                logging.warning("waggle-publish-metric not found. no metrics will be published")
+    
+        return health
 
     def health_check_passed(timer):
         logging.info("connection ok")    
