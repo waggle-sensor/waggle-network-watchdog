@@ -271,7 +271,7 @@ def write_resets_safe(reset_file, resets):
         with open(reset_file, 'w') as f:
             f.write('%d' % resets)
     except Exception:
-        logging.warnging("Unable to write to file: %s", reset_file)
+        logging.warning("Unable to write to file: %s", reset_file)
 
 def read_current_resets(reset_file):
     resets = 0
