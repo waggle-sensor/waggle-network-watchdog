@@ -9,6 +9,7 @@ import configparser
 from typing import NamedTuple, Callable
 import json
 import ast
+import os
 
 MEDIA_MMC = 0
 MEDIA_SD = 1
@@ -66,6 +67,7 @@ class NetworkWatchdogConfig(NamedTuple):
     current_media: int
     rssh_addrs: list
     network_services: list
+    adapter_loc_file: str
     network_resets: list
     network_num_resets: int
     network_reset_file: str
@@ -127,6 +129,7 @@ def read_network_watchdog_config(filename):
         hard_num_resets=int(hard_reset_settings.get("num_resets", 0)),
         hard_reset_file=sd_card_storage_loc+hard_reset_settings.get("current_reset_file", None),
         
+        adapter_loc_file=sd_card_storage_loc+all_settings.get("wifi_adapter_loc_file",None),
         rssh_addrs=list(ast.literal_eval(all_settings.get("rssh_addrs",None))),
         network_services=json.loads(all_settings.get("network_services",None)),
 	check_seconds=float(all_settings.get("check_seconds", 15.0)),
@@ -182,6 +185,60 @@ def fix_modem_port_settings():
     subprocess.run(["chown", "root:root"] + ports)
     subprocess.run(["chmod", "660"] + ports)
 
+def write_wifi_adapter_loc_safe(wifi_adapt_save_file, adapter_loc):
+    try:
+        with open(wifi_adapt_save_file, 'w') as f:
+            f.write('%s' % adapter_loc)
+    except Exception:
+        logging.warning("Unable to write to file: %s", wifi_adapt_save_file)
+
+def read_wifi_adapter_loc_safe(wifi_adapt_save_file):
+    try:
+        with open(wifi_adapt_save_file, 'r') as f:
+            return f.readline()
+    except Exception:
+        logging.warning("Unable to read from file: %s", wifi_adapt_save_file)
+        return ''
+
+def locate_wifi_adapter(nwwd_config):
+    wifi_path = '/sys/class/net/wifi0/device/driver'
+    
+    if not os.path.isdir(wifi_path):
+        logging.info("No WiFi adapter found")
+        return
+   
+    #creating adapter loc file to read/write from
+    if not Path(nwwd_config.adapter_loc_file).exists():
+        last_dir_index = nwwd_config.adapter_loc_file.rfind("/")
+        folder = nwwd_config.adapter_loc_file[:last_dir_index]
+
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        Path(nwwd_config.adapter_loc_file).touch()
+
+    #sorting through dir, usb devices start with #s so alphabetically first
+    dirDriver = os.listdir('/sys/class/net/wifi0/device/driver')
+    dirDriver.sort()
+    usb_addr = dirDriver[0].split(':')[0]
+
+    if usb_addr != read_wifi_adapter_loc_safe(nwwd_config.adapter_loc_file):
+        write_wifi_adapter_loc_safe(nwwd_config.adapter_loc_file, usb_addr)
+        logging.info("New WiFi Adapter found @ %s on usb bus", usb_addr)
+        
+def fix_wifi_adapter(nwwd_config):
+    usb_addr = read_wifi_adapter_loc_safe(nwwd_config.adapter_loc_file)
+
+    if usb_addr == '':
+        logging.info("No WiFi adapter known skipping adapter reset")
+        return
+
+    cmd_bind = 'echo ' + usb_addr + ' > /sys/bus/usb/drivers/usb/bind' 
+    cmd_unbind = 'echo ' + usb_addr + ' > /sys/bus/usb/drivers/usb/unbind'
+    
+    subprocess.Popen(cmd_unbind, shell=True, stdout=subprocess.PIPE)
+    time.sleep(1)
+    subprocess.Popen(cmd_bind, shell=True, stdout=subprocess.PIPE)
+
+    logging.info("WiFi adapter virtually reset")
 
 # NOTE Revisit how much of the network stack we should restart. For now, I want to cover all
 # cases of wifi and modems and ssh tunnel issues.
@@ -189,6 +246,7 @@ def restart_network_services(nwwd_config):
     logging.warning("restarting network services")
 
     fix_modem_port_settings()
+    fix_wifi_adapter(nwwd_config)
 
     # restart network services
     subprocess.run( ['systemctl', 'restart'] + nwwd_config.network_services )
@@ -323,12 +381,14 @@ def build_watchdog():
 
             health = health or curServerHealth
             logging.debug(f"Reporting ssh connection of {alias} as {curServerHealth}")
-            
+             
             try:
                 subprocess.check_call(["waggle-publish-metric", "sys.rssh_up", str(int(curServerHealth)), "--meta", "server=" + alias])
             except Exception:
                 logging.warning("waggle-publish-metric not found. no metrics will be published")
     
+        locate_wifi_adapter(nwwd_config)
+
         return health
 
     def health_check_passed(timer):
