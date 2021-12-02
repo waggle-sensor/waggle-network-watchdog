@@ -316,10 +316,24 @@ def build_watchdog():
     nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
     rssh_config = read_reverse_tunnel_config("/etc/waggle/config.ini")
 
-    def health_check():
-        logging.info("checking connections to any of %s", nwwd_config.rssh_addrs)
+    def publish_health(alias, health):
+        try:
+            subprocess.check_call(
+                [
+                    "waggle-publish-metric",
+                    "sys.rssh_up",
+                    str(int(health)),
+                    "--meta",
+                    "server=" + alias,
+                ]
+            )
+        except Exception:
+            logging.warning("waggle-publish-metric not found. no metrics will be published")
 
+    def health_check():
         health = False
+        # check the built in config(s)
+        logging.info("checking connections to any of %s", nwwd_config.rssh_addrs)
         for alias, server, port in nwwd_config.rssh_addrs:
             curServerHealth = require_successive_passes(
                 ssh_connection_ok,
@@ -332,18 +346,24 @@ def build_watchdog():
             health = health or curServerHealth
             logging.debug(f"Reporting ssh connection of {alias} as {curServerHealth}")
 
-            try:
-                subprocess.check_call(
-                    [
-                        "waggle-publish-metric",
-                        "sys.rssh_up",
-                        str(int(curServerHealth)),
-                        "--meta",
-                        "server=" + alias,
-                    ]
-                )
-            except Exception:
-                logging.warning("waggle-publish-metric not found. no metrics will be published")
+            publish_health(alias, curServerHealth)
+
+        # check system "beekeeper" config
+        logging.info(
+            f"checking connections to 'beekeeper' [{rssh_config.beekeeper_server}, {rssh_config.beekeeper_port}]"
+        )
+        curServerHealth = require_successive_passes(
+            ssh_connection_ok,
+            rssh_config.beekeeper_server,
+            rssh_config.beekeeper_port,
+            nwwd_config.check_successive_passes,
+            nwwd_config.check_successive_seconds,
+        )
+
+        health = health or curServerHealth
+        logging.debug(f"Reporting ssh connection of beekeeper as {curServerHealth}")
+
+        publish_health("beekeeper", curServerHealth)
 
         return health
 
