@@ -70,7 +70,6 @@ class NetworkWatchdogConfig(NamedTuple):
     rssh_addrs: list
     network_services: list
     network_resets: list
-    network_num_resets: int
     network_reset_file: str
     soft_resets: list
     soft_num_resets: int
@@ -121,7 +120,6 @@ def read_network_watchdog_config(filename):
     return NetworkWatchdogConfig(
         current_media=read_current_media(),
         network_resets=json.loads(network_reset_settings.get("resets", None)),
-        network_num_resets=int(network_reset_settings.get("num_resets", 0)),
         network_reset_file=sd_card_storage_loc
         + network_reset_settings.get("current_reset_file", None),
         soft_resets=json.loads(soft_reset_settings.get("resets", None)),
