@@ -128,10 +128,10 @@ def read_network_watchdog_config(filename):
         network_reset_file=sd_card_storage_loc
         + network_reset_settings.get("current_reset_file", None),
         soft_reset_start=json.loads(soft_reset_settings.get("reset_start", 1800)),
-        soft_num_resets=int(soft_reset_settings.get("num_resets", 0)),
+        soft_num_resets=int(soft_reset_settings.get("max_resets", 0)),
         soft_reset_file=sd_card_storage_loc + soft_reset_settings.get("current_reset_file", None),
         hard_reset_start=json.loads(hard_reset_settings.get("reset_start", 3600)),
-        hard_num_resets=int(hard_reset_settings.get("num_resets", 0)),
+        hard_num_resets=int(hard_reset_settings.get("max_resets", 0)),
         hard_reset_file=sd_card_storage_loc + hard_reset_settings.get("current_reset_file", None),
         rssh_addrs=list(ast.literal_eval(all_settings.get("rssh_addrs", None))),
         network_services=json.loads(all_settings.get("network_services", None)),
