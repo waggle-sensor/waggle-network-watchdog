@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 docker build -f Dockerfile.test -t waggle-network-watchdog .
-docker run -it --rm waggle-network-watchdog /bin/sh -c '
+docker run --rm waggle-network-watchdog /bin/sh -c '
 getvalue() {
     if test -e "$1"; then
         cat "$1"
