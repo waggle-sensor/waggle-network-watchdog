@@ -1,0 +1,16 @@
+name: CI/CD
+on: push
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Build deb
+        run: ./build.sh
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: output/*
