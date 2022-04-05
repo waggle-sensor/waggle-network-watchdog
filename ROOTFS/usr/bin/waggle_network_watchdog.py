@@ -216,8 +216,8 @@ def build_rec_actions(nwwd_config):
 
     def soft_reboot_action():
         resets = read_current_resets(nwwd_config.soft_reset_file)
-        increment_reset_file(nwwd_config.soft_reset_file)
         if resets < nwwd_config.soft_num_resets:
+            increment_reset_file(nwwd_config.soft_reset_file)
             reboot_os()
         else:
             logging.info("skipping soft reboot, max reached")
