@@ -13,6 +13,9 @@ from typing import Callable, NamedTuple
 MEDIA_MMC = 0
 MEDIA_SD = 1
 
+NW_WATCHDOG_CONFIG_PATH = "/etc/waggle/nw/config.ini"
+SYSTEM_CONFIG_PATH = "/etc/waggle/config.ini"
+
 
 class Action(NamedTuple):
     thresh: int
@@ -312,9 +315,9 @@ def read_current_media():
     return 1 if "1" in subprocess.check_output(["nvbootctrl", "get-current-slot"]).decode() else 0
 
 
-def build_watchdog():
-    nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
-    rssh_config = read_reverse_tunnel_config("/etc/waggle/config.ini")
+def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SYSTEM_CONFIG_PATH):
+    nwwd_config = read_network_watchdog_config(nwwd_config_path)
+    rssh_config = read_reverse_tunnel_config(rssh_config_path)
 
     def publish_health(alias, health):
         try:
@@ -397,10 +400,10 @@ def main():
     logging.info("Slots info after marking boot successful:")
     subprocess.run(["nvbootctrl", "dump-slots-info"])
 
-    nwwd_config = read_network_watchdog_config("/etc/waggle/nw/config.ini")
-    wd_config = read_watchdog_config("/etc/waggle/config.ini")
+    nwwd_config = read_network_watchdog_config(NW_WATCHDOG_CONFIG_PATH)
+    wd_config = read_watchdog_config(SYSTEM_CONFIG_PATH)
 
-    watchdog = build_watchdog()
+    watchdog = build_watchdog(NW_WATCHDOG_CONFIG_PATH, SYSTEM_CONFIG_PATH)
 
     while True:
         watchdog.update()
