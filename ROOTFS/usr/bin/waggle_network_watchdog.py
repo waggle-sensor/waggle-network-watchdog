@@ -72,12 +72,13 @@ class NetworkWatchdogConfig(NamedTuple):
     current_media: int
     rssh_addrs: list
     network_services: list
-    network_resets: list
+    network_reset_start: int
+    network_reset_interval: int
     network_reset_file: str
-    soft_resets: list
+    soft_reset_start: int
     soft_num_resets: int
     soft_reset_file: str
-    hard_resets: list
+    hard_reset_start: int
     hard_num_resets: int
     hard_reset_file: str
 
@@ -122,13 +123,14 @@ def read_network_watchdog_config(filename):
 
     return NetworkWatchdogConfig(
         current_media=read_current_media(),
-        network_resets=json.loads(network_reset_settings.get("resets", None)),
+        network_reset_start=json.loads(network_reset_settings.get("reset_start", 600)),
+        network_reset_interval=json.loads(network_reset_settings.get("reset_interval", 300)),
         network_reset_file=sd_card_storage_loc
         + network_reset_settings.get("current_reset_file", None),
-        soft_resets=json.loads(soft_reset_settings.get("resets", None)),
+        soft_reset_start=json.loads(soft_reset_settings.get("reset_start", 1800)),
         soft_num_resets=int(soft_reset_settings.get("num_resets", 0)),
         soft_reset_file=sd_card_storage_loc + soft_reset_settings.get("current_reset_file", None),
-        hard_resets=json.loads(hard_reset_settings.get("resets", None)),
+        hard_reset_start=json.loads(hard_reset_settings.get("reset_start", 3600)),
         hard_num_resets=int(hard_reset_settings.get("num_resets", 0)),
         hard_reset_file=sd_card_storage_loc + hard_reset_settings.get("current_reset_file", None),
         rssh_addrs=list(ast.literal_eval(all_settings.get("rssh_addrs", None))),
@@ -243,24 +245,23 @@ def build_rec_actions(nwwd_config):
             reboot_os()
 
     # Recovery actions table [time (s), recovery function]
-    # restart networking stack after 15, 20 and 25 of no beehive connectivity
-    # reboot after 30 mins of no beehive connectivity shutdown after 1 hour
-    # of no connection to beehive after 3 30 minute reboots
-    #
     # NOTE We sort in increasing order of threshold so that our linear
     # search finds the "earliest" available action
     recovery_actions = []
 
-    for time in nwwd_config.network_resets:
-        recovery_actions.append([time, reset_network_action])
+    # add in the soft and hard reboot actions
+    recovery_actions.append([nwwd_config.soft_reset_start, soft_reboot_action])
+    recovery_actions.append([nwwd_config.hard_reset_start, hard_reboot_action])
 
-    for time in nwwd_config.soft_resets:
-        recovery_actions.append([time, soft_reboot_action])
+    # we compute the number of network reset entries between the network restart
+    #  start time and the last possible action start time
+    last_action = min(nwwd_config.soft_reset_start, nwwd_config.hard_reset_start)
+    for t in range(
+        nwwd_config.network_reset_start, last_action, nwwd_config.network_reset_interval
+    ):
+        recovery_actions.append([t, reset_network_action])
 
-    for time in nwwd_config.hard_resets:
-        recovery_actions.append([time, hard_reboot_action])
-
-    return sorted(recovery_actions)
+    return sorted(recovery_actions, key=lambda x: x[0])
 
 
 def read_resets_safe(reset_file):
