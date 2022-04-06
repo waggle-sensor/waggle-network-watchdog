@@ -34,8 +34,12 @@ def main():
         recovery_actions=real_watchdog.recovery_actions,
     )
 
+    nwwd_config = waggle_network_watchdog.read_network_watchdog_config(
+        waggle_network_watchdog.NW_WATCHDOG_CONFIG_PATH
+    )
+
     for _ in range(10000):
-        current_time += 15.0
+        current_time += nwwd_config.check_seconds
         watchdog.update()
 
 
