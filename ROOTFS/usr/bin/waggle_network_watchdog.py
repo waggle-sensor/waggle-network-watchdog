@@ -117,6 +117,11 @@ def read_network_watchdog_config(filename):
     soft_reset_settings = read_config_section_dict(filename, "soft-reboot")
     hard_reset_settings = read_config_section_dict(filename, "hard-reboot")
 
+    logging.info(f"Config [all]: {all_settings}")
+    logging.info(f"Config [network-reboot]: {network_reset_settings}")
+    logging.info(f"Config [soft-reboot]: {soft_reset_settings}")
+    logging.info(f"Config [hard-reboot]: {hard_reset_settings}")
+
     sd_card_storage_loc = ""
     if read_current_media() == MEDIA_SD:
         sd_card_storage_loc = all_settings.get("sd_card_storage_loc", None)
