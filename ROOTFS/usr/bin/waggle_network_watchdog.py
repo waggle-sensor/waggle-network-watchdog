@@ -204,14 +204,14 @@ def restart_network_services(nwwd_config):
 
 def reboot_os():
     logging.warning("rebooting the system")
-    # aggressively but safely reboot the system
-    subprocess.run(["systemctl", "--force", "reboot"])
+    # execute normal reboot to allow shutdown services to clean-up
+    subprocess.run(["systemctl", "reboot"])
 
 
 def shutdown_os():
     logging.warning("shutting down the system")
-    # aggressively but safely shutdown the system
-    subprocess.run(["systemctl", "--force", "poweroff"])
+    # execute normal poweroff to allow shutdown services to clean-up
+    subprocess.run(["systemctl", "poweroff"])
 
 
 # NOTE(sean) I'm trying to better isolate the full behavior of actions into self
