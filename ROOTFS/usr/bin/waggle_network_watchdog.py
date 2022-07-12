@@ -155,6 +155,14 @@ def read_reverse_tunnel_config(filename, section="reverse-tunnel"):
     )
 
 
+def log_scoreboard(nwconfig: NetworkWatchdogConfig):
+    logging.info("= Network Watchdog Scoreboard =")
+    logging.info(f"Current Media:\t{nwconfig.current_media}")
+    logging.info(f"Network Reset Count:\t{read_current_resets(nwconfig.network_reset_file)}")
+    logging.info(f"Soft Reset Count:\t{read_current_resets(nwconfig.soft_reset_file)}")
+    logging.info(f"Hard Reset Count:\t{read_current_resets(nwconfig.hard_reset_file)}")
+
+
 def update_systemd_watchdog():
     try:
         subprocess.check_call(["systemd-notify", "WATCHDOG=1"])
@@ -202,14 +210,24 @@ def restart_network_services(nwwd_config):
     subprocess.run(["systemctl", "restart"] + nwwd_config.network_services)
 
 
-def reboot_os():
+def reboot_os_helper(nwwd_config):
     logging.warning("rebooting the system")
+    log_scoreboard(nwwd_config)
+    reboot_os()
+
+
+def reboot_os():
     # execute normal reboot to allow shutdown services to clean-up
     subprocess.run(["systemctl", "reboot"])
 
 
-def shutdown_os():
+def shutdown_os_helper(nwwd_config):
     logging.warning("shutting down the system")
+    log_scoreboard(nwwd_config)
+    shutdown_os()
+
+
+def shutdown_os():
     # execute normal poweroff to allow shutdown services to clean-up
     subprocess.run(["systemctl", "poweroff"])
 
@@ -225,7 +243,7 @@ def build_rec_actions(nwwd_config):
         resets = read_current_resets(nwwd_config.soft_reset_file)
         if resets < nwwd_config.soft_num_resets:
             increment_reset_file(nwwd_config.soft_reset_file)
-            reboot_os()
+            reboot_os_helper(nwwd_config)
         else:
             logging.info("skipping soft reboot, max reached")
 
@@ -234,7 +252,7 @@ def build_rec_actions(nwwd_config):
         increment_reset_file(nwwd_config.hard_reset_file)
 
         if resets < nwwd_config.hard_num_resets:
-            shutdown_os()
+            shutdown_os_helper(nwwd_config)
         else:
             logging.warning("executing media switch recovery action")
 
@@ -247,7 +265,7 @@ def build_rec_actions(nwwd_config):
             write_current_resets(nwwd_config.soft_reset_file, 0)
             write_current_resets(nwwd_config.network_reset_file, 0)
 
-            reboot_os()
+            reboot_os_helper(nwwd_config)
 
     # Recovery actions table [time (s), recovery function]
     # NOTE We sort in increasing order of threshold so that our linear
@@ -410,6 +428,8 @@ def main():
     wd_config = read_watchdog_config(SYSTEM_CONFIG_PATH)
 
     watchdog = build_watchdog(NW_WATCHDOG_CONFIG_PATH, SYSTEM_CONFIG_PATH)
+
+    log_scoreboard(nwwd_config)
 
     while True:
         watchdog.update()
