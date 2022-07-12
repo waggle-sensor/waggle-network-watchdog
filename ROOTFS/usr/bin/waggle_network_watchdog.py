@@ -238,14 +238,14 @@ def build_rec_actions(nwwd_config):
         else:
             logging.warning("executing media switch recovery action")
 
-            write_current_resets(nwwd_config.hard_reset_file, 0)
-            write_current_resets(nwwd_config.soft_reset_file, 0)
-            write_current_resets(nwwd_config.network_reset_file, 0)
-
             if int(nwwd_config.current_media) == MEDIA_MMC:
                 subprocess.run(["nvbootctrl", "set-active-boot-slot", "1"])
             else:
                 subprocess.run(["nvbootctrl", "set-active-boot-slot", "0"])
+
+            write_current_resets(nwwd_config.hard_reset_file, 0)
+            write_current_resets(nwwd_config.soft_reset_file, 0)
+            write_current_resets(nwwd_config.network_reset_file, 0)
 
             reboot_os()
 
