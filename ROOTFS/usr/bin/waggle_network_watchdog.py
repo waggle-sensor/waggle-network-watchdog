@@ -35,20 +35,27 @@ class Watchdog:
         self.health_check_passed = health_check_passed
         self.health_check_failed = health_check_failed
 
-        self.last_connection_time = self.time_func()
+        # assume connection is good on init
+        self.health_check_ok_window_finish = self.time_func()
+        self.health_check_ok_window_start = self.health_check_ok_window_finish
 
     def update(self):
         health_check_ok = self.health_check()
         health_check_finish_time = self.time_func()
-        elapsed = health_check_finish_time - self.last_connection_time
+        elapsed = health_check_finish_time - self.health_check_ok_window_finish
 
         if health_check_ok:
-            self.health_check_passed(elapsed)
-            self.last_connection_time = health_check_finish_time
-            self.called_actions.clear()
+            if not self.health_check_ok_window_start:
+                self.health_check_ok_window_start = health_check_finish_time
+            health_check_ok_duration = health_check_finish_time - self.health_check_ok_window_start
+            if self.health_check_passed(elapsed, health_check_ok_duration):
+                # only clear called actions if pass window has cleared
+                self.health_check_ok_window_finish = health_check_finish_time
+                self.called_actions.clear()
             return
 
         self.health_check_failed(elapsed)
+        self.health_check_ok_window_start = 0
 
         # dispatch all activated recovery actions
         for action in self.recovery_actions:
@@ -66,9 +73,10 @@ class WatchdogConfig(NamedTuple):
 
 
 class NetworkWatchdogConfig(NamedTuple):
-    check_seconds: float
-    check_successive_passes: int
-    check_successive_seconds: float
+    health_check_period: float
+    health_check_test_runs: int
+    health_check_test_runs_period: float
+    health_check_pass_threshold: float
     current_media: int
     rssh_addrs: list
     network_services: list
@@ -140,9 +148,10 @@ def read_network_watchdog_config(filename):
         hard_reset_file=sd_card_storage_loc + hard_reset_settings.get("current_reset_file", None),
         rssh_addrs=list(ast.literal_eval(all_settings.get("rssh_addrs", None))),
         network_services=json.loads(all_settings.get("network_services", None)),
-        check_seconds=float(all_settings.get("check_seconds", 15.0)),
-        check_successive_passes=int(all_settings.get("check_successive_passes", 3)),
-        check_successive_seconds=float(all_settings.get("check_successive_seconds", 5.0)),
+        health_check_period=float(all_settings.get("health_check_period", 15.0)),
+        health_check_test_runs=int(all_settings.get("health_check_test_runs", 3)),
+        health_check_test_runs_period=float(all_settings.get("health_check_test_runs_period", 5.0)),
+        health_check_pass_threshold=float(all_settings.get("health_check_pass_threshold", 600.0)),
     )
 
 
@@ -182,11 +191,11 @@ def ssh_connection_ok(server, port):
         return False
 
 
-def require_successive_passes(check_func, server, port, successive_passes, successive_seconds):
-    for _ in range(successive_passes):
+def require_successive_passes(check_func, server, port, test_runs, test_runs_period):
+    for _ in range(test_runs):
         if not check_func(server, port):
             return False
-        time.sleep(successive_seconds)
+        time.sleep(test_runs_period)
     return True
 
 
@@ -284,7 +293,10 @@ def build_rec_actions(nwwd_config):
     ):
         recovery_actions.append([t, reset_network_action])
 
-    return sorted(recovery_actions, key=lambda x: x[0])
+    recovery_actions = sorted(recovery_actions, key=lambda x: x[0])
+    logging.info(f"Recovery schedule: {recovery_actions}")
+
+    return recovery_actions
 
 
 def read_resets_safe(reset_file):
@@ -366,8 +378,8 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
                 ssh_connection_ok,
                 server,
                 port,
-                nwwd_config.check_successive_passes,
-                nwwd_config.check_successive_seconds,
+                nwwd_config.health_check_test_runs,
+                nwwd_config.health_check_test_runs_period,
             )
 
             health = health or curServerHealth
@@ -383,8 +395,8 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
             ssh_connection_ok,
             rssh_config.beekeeper_server,
             rssh_config.beekeeper_port,
-            nwwd_config.check_successive_passes,
-            nwwd_config.check_successive_seconds,
+            nwwd_config.health_check_test_runs,
+            nwwd_config.health_check_test_runs_period,
         )
 
         health = health or curServerHealth
@@ -394,14 +406,30 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
 
         return health
 
-    def health_check_passed(timer):
-        logging.info("connection ok")
-        update_reset_file(nwwd_config.hard_reset_file, 0)
-        update_reset_file(nwwd_config.soft_reset_file, 0)
-        update_reset_file(nwwd_config.network_reset_file, 0)
+    def health_check_passed(time_since_last_conn, pass_duration):
+        cleared = False
+        logging.info(
+            "connection ok (last connection window: %ss ago) (pass window duration: %ss / %ss)",
+            time_since_last_conn,
+            pass_duration,
+            nwwd_config.health_check_pass_threshold,
+        )
+        if pass_duration >= nwwd_config.health_check_pass_threshold:
+            logging.info(
+                "pass duration [%ss] exceeds threshold [%ss], resetting recovery scoreboard",
+                pass_duration,
+                nwwd_config.health_check_pass_threshold,
+            )
+            update_reset_file(nwwd_config.hard_reset_file, 0)
+            update_reset_file(nwwd_config.soft_reset_file, 0)
+            update_reset_file(nwwd_config.network_reset_file, 0)
+            cleared = True
+        return cleared
 
-    def health_check_failed(timer):
-        logging.warning("no connection for %ss", timer)
+    def health_check_failed(time_since_last_conn):
+        logging.warning(
+            "no connection for %ss (time since last passing window)", time_since_last_conn
+        )
 
     recovery_actions = build_rec_actions(nwwd_config)
 
@@ -441,7 +469,7 @@ def main():
         if wd_config.nwwd_ok_file is not None:
             Path(wd_config.nwwd_ok_file).touch()
 
-        time.sleep(nwwd_config.check_seconds)
+        time.sleep(nwwd_config.health_check_period)
 
 
 if __name__ == "__main__":
