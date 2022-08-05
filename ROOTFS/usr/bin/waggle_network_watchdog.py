@@ -54,8 +54,8 @@ class Watchdog:
                 self.called_actions.clear()
             return
 
-        self.health_check_failed(elapsed)
-        self.health_check_ok_window_start = 0
+        if not self.health_check_failed(elapsed):
+            self.health_check_ok_window_start = 0
 
         # dispatch all activated recovery actions
         for action in self.recovery_actions:
@@ -427,6 +427,7 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
         return cleared
 
     def health_check_failed(time_since_last_conn):
+        cleared = False
         logging.warning(
             "no connection for %ss (time since last passing window)", time_since_last_conn
         )
