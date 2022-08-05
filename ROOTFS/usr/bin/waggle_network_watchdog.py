@@ -22,9 +22,21 @@ class Action(NamedTuple):
     func: Callable
 
 
+class HealthConfidence(NamedTuple):
+    health_check_max_confidence: int
+    health_check_good_acc: int
+    health_check_fail_acc: int
+
+
 class Watchdog:
     def __init__(
-        self, time_func, recovery_actions, health_check, health_check_passed, health_check_failed
+        self,
+        time_func,
+        recovery_actions,
+        health_check,
+        health_check_passed,
+        health_check_failed,
+        health_confidence,
     ):
         self.time_func = time_func
         self.recovery_actions = [Action(thresh, func) for thresh, func in recovery_actions]
@@ -34,8 +46,21 @@ class Watchdog:
         self.health_check = health_check
         self.health_check_passed = health_check_passed
         self.health_check_failed = health_check_failed
+        self.health_confidence = health_confidence
 
         self.last_connection_time = self.time_func()
+        # assume low confidence on init
+        self.current_health_confidence = 0
+
+    def clamp(self, n, smallest, largest):
+        return max(smallest, min(n, largest))
+
+    def changeConfidence(self, confidence, acc, decrement=False):
+        if decrement:
+            confidence -= acc
+        else:
+            confidence += acc
+        return self.clamp(confidence, 0, self.health_confidence.health_check_max_confidence)
 
     def update(self):
         health_check_ok = self.health_check()
@@ -43,22 +68,33 @@ class Watchdog:
         elapsed = health_check_finish_time - self.last_connection_time
 
         if health_check_ok:
-            self.health_check_passed(elapsed)
-            self.last_connection_time = health_check_finish_time
-            self.called_actions.clear()
+            self.current_health_confidence = self.changeConfidence(
+                self.current_health_confidence,
+                self.health_confidence.health_check_good_acc,
+                decrement=False,
+            )
+            # only clear called actions if we are in the pass window
+            if self.health_check_passed(elapsed, self.current_health_confidence):
+                self.last_connection_time = health_check_finish_time
+                self.called_actions.clear()
             return
 
-        self.health_check_failed(elapsed)
-
-        # dispatch all activated recovery actions
-        for action in self.recovery_actions:
-            if elapsed < action.thresh:
-                break
-            if action in self.called_actions:
-                continue
-            self.called_actions.add(action)
-            logging.debug("calling action %s", action)
-            action.func()
+        self.current_health_confidence = self.changeConfidence(
+            self.current_health_confidence,
+            self.health_confidence.health_check_fail_acc,
+            decrement=True,
+        )
+        # only put us in the recovery window if we are below fail confidence threshold
+        if self.health_check_failed(elapsed, self.current_health_confidence):
+            # dispatch all activated recovery actions
+            for action in self.recovery_actions:
+                if elapsed < action.thresh:
+                    break
+                if action in self.called_actions:
+                    continue
+                self.called_actions.add(action)
+                logging.debug("calling action %s", action)
+                action.func()
 
 
 class WatchdogConfig(NamedTuple):
@@ -66,9 +102,14 @@ class WatchdogConfig(NamedTuple):
 
 
 class NetworkWatchdogConfig(NamedTuple):
-    check_seconds: float
-    check_successive_passes: int
-    check_successive_seconds: float
+    health_check_period: float
+    health_check_test_runs: int
+    health_check_test_runs_period: float
+    health_check_max_confidence: int
+    health_check_pass_confidence_perc: float
+    health_check_fail_confidence_perc: float
+    health_check_good_acc: int
+    health_check_fail_acc: int
     current_media: int
     rssh_addrs: list
     network_services: list
@@ -140,9 +181,18 @@ def read_network_watchdog_config(filename):
         hard_reset_file=sd_card_storage_loc + hard_reset_settings.get("current_reset_file", None),
         rssh_addrs=list(ast.literal_eval(all_settings.get("rssh_addrs", None))),
         network_services=json.loads(all_settings.get("network_services", None)),
-        check_seconds=float(all_settings.get("check_seconds", 15.0)),
-        check_successive_passes=int(all_settings.get("check_successive_passes", 3)),
-        check_successive_seconds=float(all_settings.get("check_successive_seconds", 5.0)),
+        health_check_period=float(all_settings.get("health_check_period", 15.0)),
+        health_check_test_runs=int(all_settings.get("health_check_test_runs", 3)),
+        health_check_test_runs_period=float(all_settings.get("health_check_test_runs_period", 5.0)),
+        health_check_max_confidence=float(all_settings.get("health_check_max_confidence", 10)),
+        health_check_pass_confidence_perc=float(
+            all_settings.get("health_check_pass_confidence_perc", 0.7)
+        ),
+        health_check_fail_confidence_perc=float(
+            all_settings.get("health_check_fail_confidence_perc", 0.3)
+        ),
+        health_check_good_acc=float(all_settings.get("health_check_good_acc", 1)),
+        health_check_fail_acc=float(all_settings.get("health_check_fail_acc", 1)),
     )
 
 
@@ -182,11 +232,11 @@ def ssh_connection_ok(server, port):
         return False
 
 
-def require_successive_passes(check_func, server, port, successive_passes, successive_seconds):
-    for _ in range(successive_passes):
+def require_successive_passes(check_func, server, port, test_runs, test_runs_period):
+    for _ in range(test_runs):
         if not check_func(server, port):
             return False
-        time.sleep(successive_seconds)
+        time.sleep(test_runs_period)
     return True
 
 
@@ -284,7 +334,10 @@ def build_rec_actions(nwwd_config):
     ):
         recovery_actions.append([t, reset_network_action])
 
-    return sorted(recovery_actions, key=lambda x: x[0])
+    recovery_actions = sorted(recovery_actions, key=lambda x: x[0])
+    logging.info(f"Recovery schedule: {recovery_actions}")
+
+    return recovery_actions
 
 
 def read_resets_safe(reset_file):
@@ -343,6 +396,13 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
     nwwd_config = read_network_watchdog_config(nwwd_config_path)
     rssh_config = read_reverse_tunnel_config(rssh_config_path)
 
+    health_good_conf_thres = (
+        nwwd_config.health_check_max_confidence * nwwd_config.health_check_pass_confidence_perc
+    )
+    health_bad_conf_thres = (
+        nwwd_config.health_check_max_confidence * nwwd_config.health_check_fail_confidence_perc
+    )
+
     def publish_health(alias, health):
         try:
             subprocess.check_call(
@@ -366,8 +426,8 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
                 ssh_connection_ok,
                 server,
                 port,
-                nwwd_config.check_successive_passes,
-                nwwd_config.check_successive_seconds,
+                nwwd_config.health_check_test_runs,
+                nwwd_config.health_check_test_runs_period,
             )
 
             health = health or curServerHealth
@@ -383,8 +443,8 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
             ssh_connection_ok,
             rssh_config.beekeeper_server,
             rssh_config.beekeeper_port,
-            nwwd_config.check_successive_passes,
-            nwwd_config.check_successive_seconds,
+            nwwd_config.health_check_test_runs,
+            nwwd_config.health_check_test_runs_period,
         )
 
         health = health or curServerHealth
@@ -394,16 +454,44 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
 
         return health
 
-    def health_check_passed(timer):
-        logging.info("connection ok")
-        update_reset_file(nwwd_config.hard_reset_file, 0)
-        update_reset_file(nwwd_config.soft_reset_file, 0)
-        update_reset_file(nwwd_config.network_reset_file, 0)
+    def health_check_passed(time_since_last_conn, current_confidence):
+        enter_health_pass_window = False
+        logging.info(
+            "connection ok (last connection window: %ss ago) (pass window confidence: %d >= %d)",
+            time_since_last_conn,
+            current_confidence,
+            health_good_conf_thres,
+        )
 
-    def health_check_failed(timer):
-        logging.warning("no connection for %ss", timer)
+        if current_confidence >= health_good_conf_thres:
+            logging.info("connection confidence is high, reset recovery score-board")
+            update_reset_file(nwwd_config.hard_reset_file, 0)
+            update_reset_file(nwwd_config.soft_reset_file, 0)
+            update_reset_file(nwwd_config.network_reset_file, 0)
+            enter_health_pass_window = True
+        return enter_health_pass_window
+
+    def health_check_failed(time_since_last_conn, current_confidence):
+        enter_recovery_window = False
+        logging.warning(
+            "no connection for %ss (time since last passing window)  (fail window confidence: %d <= %d)",
+            time_since_last_conn,
+            current_confidence,
+            health_bad_conf_thres,
+        )
+
+        if current_confidence <= health_bad_conf_thres:
+            logging.warning("connection confidence is low, enter recovery mode")
+            enter_recovery_window = True
+        return enter_recovery_window
 
     recovery_actions = build_rec_actions(nwwd_config)
+
+    health_confidence = HealthConfidence(
+        health_check_max_confidence=nwwd_config.health_check_max_confidence,
+        health_check_good_acc=nwwd_config.health_check_good_acc,
+        health_check_fail_acc=nwwd_config.health_check_fail_acc,
+    )
 
     return Watchdog(
         time_func=time.monotonic,
@@ -411,6 +499,7 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
         health_check_passed=health_check_passed,
         health_check_failed=health_check_failed,
         recovery_actions=recovery_actions,
+        health_confidence=health_confidence,
     )
 
 
@@ -441,7 +530,7 @@ def main():
         if wd_config.nwwd_ok_file is not None:
             Path(wd_config.nwwd_ok_file).touch()
 
-        time.sleep(nwwd_config.check_seconds)
+        time.sleep(nwwd_config.health_check_period)
 
 
 if __name__ == "__main__":
