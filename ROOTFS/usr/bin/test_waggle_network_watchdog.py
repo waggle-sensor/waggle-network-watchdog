@@ -17,7 +17,7 @@ def main():
 
     logging.basicConfig(level=logging.INFO)
 
-    den = args.loop_max * 1.5
+    den = args.loop_max
     logging.info("Loop %d (fail rate: %f)", args.loop, (args.loop / den))
 
     current_time = 0.0
