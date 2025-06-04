@@ -180,13 +180,15 @@ def read_network_watchdog_config(filename):
     logging.info(f"Config [soft-reboot]: {soft_reset_settings}")
     logging.info(f"Config [hard-reboot]: {hard_reset_settings}")
 
+    current_media = read_current_media()
+
     primary_storage_loc = ""
-    if read_current_media() == MEDIA_PRIMARY:
+    if current_media == MEDIA_PRIMARY:
         # NOTE The sd_card_ is an unfortunate artifact of the MMC / SD naming but we will leave it for now
         primary_storage_loc = all_settings.get("sd_card_storage_loc", None)
 
     return NetworkWatchdogConfig(
-        current_media=read_current_media(),
+        current_media=current_media,
         network_reset_start=json.loads(network_reset_settings.get("reset_start", 600)),
         network_reset_interval=json.loads(
             network_reset_settings.get("reset_interval", 300)
