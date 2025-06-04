@@ -405,45 +405,55 @@ def update_reset_file(reset_file, value):
         write_current_resets(reset_file, value)
 
 
-def get_boot_info() -> dict[str, str]:
-    boot_info = {}
+class BootInfo(NamedTuple):
+    next: str
+    current: str
+    emmc: str
+    nvme: str
 
+
+def get_boot_info() -> BootInfo:
     output = subprocess.check_output(["efibootmgr"], text=True)
 
     match = re.search(r"BootNext: ([0-9A-F]+)", output)
     if match:
-        boot_info["next"] = match.group(1)
+        next = match.group(1)
     else:
-        boot_info["next"] = ""
+        next = ""
 
     match = re.search(r"BootCurrent: ([0-9A-F]+)", output)
     if match:
-        boot_info["current"] = match.group(1)
+        current = match.group(1)
     else:
         raise RuntimeError("Could not detect current boot media.")
 
     match = re.search(r"Boot([0-9A-F]+).*eMMC", output)
     if match:
-        boot_info["emmc"] = match.group(1)
+        emmc = match.group(1)
     else:
         raise RuntimeError("Could not detect eMMC boot media.")
 
     match = re.search(r"Boot([0-9A-F]+).*WDS100T3XHC", output)
     if match:
-        boot_info["nvme"] = match.group(1)
+        nvme = match.group(1)
     else:
         raise RuntimeError("Could not detect nVME boot media.")
 
-    return boot_info
+    return BootInfo(
+        next=next,
+        current=current,
+        emmc=emmc,
+        nvme=nvme,
+    )
 
 
 def read_current_media():
     boot_info = get_boot_info()
 
-    if boot_info["current"] == boot_info["nvme"]:
+    if boot_info.current == boot_info.nvme:
         return MEDIA_PRIMARY
 
-    if boot_info["current"] == boot_info["emmc"]:
+    if boot_info.current == boot_info.emmc:
         return MEDIA_RECOVERY
 
     raise RuntimeError("System is on unknown current media.")
@@ -453,14 +463,14 @@ def set_next_boot_media(target_media):
     boot_info = get_boot_info()
 
     if target_media == MEDIA_PRIMARY:
-        next_id = "nvme"
+        next = boot_info.nvme
     elif target_media == MEDIA_RECOVERY:
-        next_id = "emmc"
+        next = boot_info.emmc
     else:
         raise ValueError(f"Invalid target media {target_media}.")
 
-    if boot_info["next"] != boot_info[next_id]:
-        subprocess.check_call(["efibootmgr", "-n", boot_info[next_id]])
+    if boot_info.next != next:
+        subprocess.check_call(["efibootmgr", "-n", next])
 
 
 def build_watchdog(
