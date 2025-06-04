@@ -226,8 +226,13 @@ def read_reverse_tunnel_config(filename, section="reverse-tunnel"):
 
 
 def log_scoreboard(nwconfig: NetworkWatchdogConfig):
+    if nwconfig.current_media == MEDIA_PRIMARY:
+        current_media_name = "primary"
+    else:
+        current_media_name = "recovery"
+
     logging.info("= Network Watchdog Scoreboard =")
-    logging.info(f"Current Media:\t{nwconfig.current_media}")
+    logging.info(f"Current Media:\t{nwconfig.current_media}\t{current_media_name}")
     logging.info(
         f"Network Reset Count:\t{read_current_resets(nwconfig.network_reset_file)}"
     )
