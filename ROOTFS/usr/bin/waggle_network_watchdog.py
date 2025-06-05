@@ -10,9 +10,12 @@ from collections import deque
 from glob import glob
 from pathlib import Path
 from typing import Callable, NamedTuple
+import re
 
-MEDIA_MMC = 0
-MEDIA_SD = 1
+# NOTE We are going to use the nVME instead of SD card going forward, however, to keep the settings the same,
+# we will continue calling this the SD.
+MEDIA_RECOVERY = 0
+MEDIA_PRIMARY = 1
 
 NW_WATCHDOG_CONFIG_PATH = "/etc/waggle/nw/config.ini"
 SYSTEM_CONFIG_PATH = "/etc/waggle/config.ini"
@@ -51,7 +54,9 @@ class Watchdog:
         health_score_config,
     ):
         self.time_func = time_func
-        self.recovery_actions = [Action(thresh, func) for thresh, func in recovery_actions]
+        self.recovery_actions = [
+            Action(thresh, func) for thresh, func in recovery_actions
+        ]
         # important: tick function expects recovery actions to sorted by thresh in increasing order
         self.recovery_actions.sort(key=lambda a: a.thresh)
         self.called_actions = set()
@@ -59,7 +64,9 @@ class Watchdog:
         self.health_check_passed = health_check_passed
         self.health_check_failed = health_check_failed
         self.health_score_config = health_score_config
-        self.health_score = HealthHistory(health_score_config.health_check_history_count)
+        self.health_score = HealthHistory(
+            health_score_config.health_check_history_count
+        )
 
         self.last_connection_time = self.time_func()
 
@@ -84,13 +91,19 @@ class Watchdog:
             )
 
         # if above the "healthy" percentage, indicate healthy
-        if self.health_score.percentage >= self.health_score_config.health_check_healthy_perc:
+        if (
+            self.health_score.percentage
+            >= self.health_score_config.health_check_healthy_perc
+        ):
             self.health_check_passed(elapsed)
             self.last_connection_time = health_check_finish_time
             self.called_actions.clear()
 
         # if below the "not healthy" percentage, enter recovery counter
-        if self.health_score.percentage < self.health_score_config.health_check_recovery_perc:
+        if (
+            self.health_score.percentage
+            < self.health_score_config.health_check_recovery_perc
+        ):
             self.health_check_failed(elapsed)
             # dispatch all activated recovery actions
             for action in self.recovery_actions:
@@ -167,28 +180,39 @@ def read_network_watchdog_config(filename):
     logging.info(f"Config [soft-reboot]: {soft_reset_settings}")
     logging.info(f"Config [hard-reboot]: {hard_reset_settings}")
 
-    sd_card_storage_loc = ""
-    if read_current_media() == MEDIA_SD:
-        sd_card_storage_loc = all_settings.get("sd_card_storage_loc", None)
+    current_media = read_current_media()
+
+    primary_storage_loc = ""
+    if current_media == MEDIA_PRIMARY:
+        # NOTE The sd_card_ is an unfortunate artifact of the MMC / SD naming but we will leave it for now
+        primary_storage_loc = all_settings.get("sd_card_storage_loc", None)
 
     return NetworkWatchdogConfig(
-        current_media=read_current_media(),
+        current_media=current_media,
         network_reset_start=json.loads(network_reset_settings.get("reset_start", 600)),
-        network_reset_interval=json.loads(network_reset_settings.get("reset_interval", 300)),
-        network_reset_file=sd_card_storage_loc
+        network_reset_interval=json.loads(
+            network_reset_settings.get("reset_interval", 300)
+        ),
+        network_reset_file=primary_storage_loc
         + network_reset_settings.get("current_reset_file", None),
         soft_reset_start=json.loads(soft_reset_settings.get("reset_start", 1800)),
         soft_num_resets=int(soft_reset_settings.get("max_resets", 0)),
-        soft_reset_file=sd_card_storage_loc + soft_reset_settings.get("current_reset_file", None),
+        soft_reset_file=primary_storage_loc
+        + soft_reset_settings.get("current_reset_file", None),
         hard_reset_start=json.loads(hard_reset_settings.get("reset_start", 3600)),
         hard_num_resets=int(hard_reset_settings.get("max_resets", 0)),
-        hard_reset_file=sd_card_storage_loc + hard_reset_settings.get("current_reset_file", None),
+        hard_reset_file=primary_storage_loc
+        + hard_reset_settings.get("current_reset_file", None),
         rssh_addrs=list(ast.literal_eval(all_settings.get("rssh_addrs", None))),
         network_services=json.loads(all_settings.get("network_services", None)),
         health_check_period=float(all_settings.get("health_check_period", 15.0)),
         health_check_history=float(all_settings.get("health_check_history", 600.0)),
-        health_check_healthy_perc=float(all_settings.get("health_check_healthy_perc", 0.7)),
-        health_check_recovery_perc=float(all_settings.get("health_check_recovery_perc", 0.3)),
+        health_check_healthy_perc=float(
+            all_settings.get("health_check_healthy_perc", 0.7)
+        ),
+        health_check_recovery_perc=float(
+            all_settings.get("health_check_recovery_perc", 0.3)
+        ),
     )
 
 
@@ -202,9 +226,16 @@ def read_reverse_tunnel_config(filename, section="reverse-tunnel"):
 
 
 def log_scoreboard(nwconfig: NetworkWatchdogConfig):
+    if nwconfig.current_media == MEDIA_PRIMARY:
+        current_media_name = "primary"
+    else:
+        current_media_name = "recovery"
+
     logging.info("= Network Watchdog Scoreboard =")
-    logging.info(f"Current Media:\t{nwconfig.current_media}")
-    logging.info(f"Network Reset Count:\t{read_current_resets(nwconfig.network_reset_file)}")
+    logging.info(f"Current Media:\t{nwconfig.current_media}\t{current_media_name}")
+    logging.info(
+        f"Network Reset Count:\t{read_current_resets(nwconfig.network_reset_file)}"
+    )
     logging.info(f"Soft Reset Count:\t{read_current_resets(nwconfig.soft_reset_file)}")
     logging.info(f"Hard Reset Count:\t{read_current_resets(nwconfig.hard_reset_file)}")
 
@@ -223,7 +254,10 @@ def ssh_connection_ok(server, port):
         server_addr = f"{socket.gethostbyname(server)}:{port}"
         logging.debug(f"checking for ssh connection to [{server_addr}]")
 
-        return server_addr in subprocess.check_output(["ss", "-t", "state", "established"]).decode()
+        return (
+            server_addr
+            in subprocess.check_output(["ss", "-t", "state", "established"]).decode()
+        )
     except Exception:
         return False
 
@@ -294,10 +328,10 @@ def build_rec_actions(nwwd_config):
         else:
             logging.warning("executing media switch recovery action")
 
-            if int(nwwd_config.current_media) == MEDIA_MMC:
-                subprocess.run(["nvbootctrl", "set-active-boot-slot", "1"])
+            if int(nwwd_config.current_media) == MEDIA_RECOVERY:
+                set_next_boot_media(MEDIA_PRIMARY)
             else:
-                subprocess.run(["nvbootctrl", "set-active-boot-slot", "0"])
+                set_next_boot_media(MEDIA_RECOVERY)
 
             write_current_resets(nwwd_config.hard_reset_file, 0)
             write_current_resets(nwwd_config.soft_reset_file, 0)
@@ -376,11 +410,77 @@ def update_reset_file(reset_file, value):
         write_current_resets(reset_file, value)
 
 
+class BootInfo(NamedTuple):
+    next: str
+    current: str
+    emmc: str
+    nvme: str
+
+
+def get_boot_info() -> BootInfo:
+    output = subprocess.check_output(["efibootmgr"], text=True)
+
+    match = re.search(r"BootNext: ([0-9A-F]+)", output)
+    if match:
+        next = match.group(1)
+    else:
+        next = ""
+
+    match = re.search(r"BootCurrent: ([0-9A-F]+)", output)
+    if match:
+        current = match.group(1)
+    else:
+        raise RuntimeError("Could not detect current boot media.")
+
+    match = re.search(r"Boot([0-9A-F]+).*eMMC", output)
+    if match:
+        emmc = match.group(1)
+    else:
+        raise RuntimeError("Could not detect eMMC boot media.")
+
+    match = re.search(r"Boot([0-9A-F]+).*WDS100T3XHC", output)
+    if match:
+        nvme = match.group(1)
+    else:
+        raise RuntimeError("Could not detect nVME boot media.")
+
+    return BootInfo(
+        next=next,
+        current=current,
+        emmc=emmc,
+        nvme=nvme,
+    )
+
+
 def read_current_media():
-    return 1 if "1" in subprocess.check_output(["nvbootctrl", "get-current-slot"]).decode() else 0
+    boot_info = get_boot_info()
+
+    if boot_info.current == boot_info.nvme:
+        return MEDIA_PRIMARY
+
+    if boot_info.current == boot_info.emmc:
+        return MEDIA_RECOVERY
+
+    raise RuntimeError("System is on unknown current media.")
 
 
-def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SYSTEM_CONFIG_PATH):
+def set_next_boot_media(target_media):
+    boot_info = get_boot_info()
+
+    if target_media == MEDIA_PRIMARY:
+        next = boot_info.nvme
+    elif target_media == MEDIA_RECOVERY:
+        next = boot_info.emmc
+    else:
+        raise ValueError(f"Invalid target media {target_media}.")
+
+    if boot_info.next != next:
+        subprocess.check_call(["efibootmgr", "-n", next])
+
+
+def build_watchdog(
+    nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SYSTEM_CONFIG_PATH
+):
     nwwd_config = read_network_watchdog_config(nwwd_config_path)
     rssh_config = read_reverse_tunnel_config(rssh_config_path)
 
@@ -396,7 +496,9 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
                 ]
             )
         except Exception:
-            logging.warning("waggle-publish-metric not found. no metrics will be published")
+            logging.warning(
+                "waggle-publish-metric not found. no metrics will be published"
+            )
 
     def health_check():
         health = False
@@ -467,14 +569,7 @@ def build_watchdog(nwwd_config_path=NW_WATCHDOG_CONFIG_PATH, rssh_config_path=SY
 
 
 def main():
-    subprocess.run(["nvbootctrl", "dump-slots-info"])
-    subprocess.run(["nv_update_engine", "-v"])
-    subprocess.run(["nvbootctrl", "mark-boot-successful"])
-
     logging.basicConfig(level=logging.INFO)
-    logging.info("marked boot as successful for media %s", read_current_media())
-    logging.info("Slots info after marking boot successful:")
-    subprocess.run(["nvbootctrl", "dump-slots-info"])
 
     nwwd_config = read_network_watchdog_config(NW_WATCHDOG_CONFIG_PATH)
     wd_config = read_watchdog_config(SYSTEM_CONFIG_PATH)
